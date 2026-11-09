@@ -1,0 +1,49 @@
+x-app: &app
+  build: .
+  environment:
+    DATABASE_URL: postgres://wager:wager@postgres:5432/wager
+    SQS_ENDPOINT: http://localstack:4566
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: wager
+      POSTGRES_PASSWORD: wager
+      POSTGRES_DB: wager
+    ports: ["${POSTGRES_PORT:-5432}:5432"]
+    volumes: ["database:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wager -d wager"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+  localstack:
+    image: localstack/localstack:4
+    environment:
+      SERVICES: sqs
+      SQS_ENDPOINT_STRATEGY: dynamic
+    ports: ["4566:4566"]
+    volumes: ["./docker/queues.sh:/etc/localstack/init/ready.d/queues.sh:ro"]
+    healthcheck:
+      test: ["CMD-SHELL", "awslocal sqs get-queue-url --queue-name wager-events.fifo >/dev/null 2>&1"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+  migrate:
+    <<: *app
+    command: ["bun", "run", "migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+  api:
+    <<: *app
+    ports: ["3000-3002:3000"]
+    stop_grace_period: 45s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      localstack:
+        condition: service_healthy
+volumes:
+  database:
